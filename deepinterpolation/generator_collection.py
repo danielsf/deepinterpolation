@@ -1269,6 +1269,8 @@ class OphysGenerator(DeepGenerator):
         )
         input_index = input_index[input_index != index_frame]
 
+        # Naively running with start_frame=0 causes some input_index
+        # to be <0 which this version of h5py does not like.
         data_img_input = movie_obj["data"][input_index, :, :]
         data_img_output = movie_obj["data"][index_frame, :, :]
 
