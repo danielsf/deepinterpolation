@@ -7,6 +7,9 @@ from tensorflow.keras.models import load_model
 import deepinterpolation.loss_collection as lc
 
 
+import time
+
+
 class fmri_inferrence:
     # This inferrence is specific to fMRI which is raster scanning for
     # denoising
@@ -192,6 +195,10 @@ class core_inferrence:
         )
 
     def run(self):
+        sfd_t0 = time.time()
+        print("starting core inference")
+        print(f"nb_datasets: {self.nb_datasets}")
+        print(f"batch_size: {self.batch_size}")
         final_shape = [self.nb_datasets * self.batch_size]
         final_shape.extend(self.indiv_shape)
 
@@ -245,3 +252,6 @@ class core_inferrence:
                 start = index_dataset * self.batch_size
                 end = index_dataset * self.batch_size + local_size
                 dset_out[start:end, :] = corrected_data
+        print("done with core_inference")
+        duration = time.time()-sfd_t0
+        print(f"core_inference took {duration:.2e} seconds")
