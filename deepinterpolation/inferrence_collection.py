@@ -189,7 +189,8 @@ def core_inference_worker(
         input_lookup,
         rescale,
         save_raw,
-        output_dict):
+        output_dict,
+        output_lock):
 
     model = load_model_worker(json_data)
     local_output = {}
@@ -216,9 +217,11 @@ def core_inference_worker(
             corrected_raw = None
         local_output[dataset_index] = {'corrected_raw': corrected_raw,
                                        'corrected_data': corrected_data}
-    index_list = list(local_output.keys())
-    for data_index in index_list:
-        output_dict[data_index] = local_output.pop(data_index)
+
+    with output_lock:
+        index_list = list(local_output.keys())
+        for data_index in index_list:
+            output_dict[data_index] = local_output.pop(data_index)
 
 
 def write_output_to_file(output_dict,
@@ -286,6 +289,7 @@ class core_inferrence:
 
         mgr = multiprocessing.Manager()
         output_dict = mgr.dict()
+        output_lock = mgr.Lock()
         process_list = []
 
         with h5py.File(self.output_file, "w") as file_handle:
@@ -321,20 +325,21 @@ class core_inferrence:
                                   this_batch,
                                   self.rescale,
                                   self.save_raw,
-                                  output_dict))
+                                  output_dict,
+                                  output_lock))
 
                 process.start()
                 process_list.append(process)
-                if len(process_list) >= n_parallel_workers:
-                    for p in process_list:
-                        p.join()
-                    process_list = []
+                while len(process_list) >= n_parallel_workers:
+                    process_list = _winnow_process_list(process_list)
 
-                    write_output_to_file(
-                        output_dict,
-                        raw_out,
-                        dset_out,
-                        self.batch_size)
+                if len(output_dict) >= 8:
+                    with output_lock:
+                        write_output_to_file(
+                            output_dict,
+                            raw_out,
+                            dset_out,
+                            self.batch_size)
 
             for p in process_list:
                 p.join()
