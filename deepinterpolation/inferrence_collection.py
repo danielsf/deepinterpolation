@@ -228,11 +228,13 @@ def write_output_to_file(output_dict,
                          output_file_path,
                          raw_dataset_name,
                          output_dataset_name,
-                         batch_size):
+                         batch_size,
+                         save_raw):
     index_list = list(output_dict.keys())
 
     with h5py.File(output_file_path, 'a') as out_file:
-        raw_out = out_file[raw_dataset_name]
+        if save_raw:
+            raw_out = out_file[raw_dataset_name]
         dset_out = out_file[output_dataset_name]
         for dataset_index in index_list:
             dataset = output_dict.pop(dataset_index)
@@ -241,7 +243,7 @@ def write_output_to_file(output_dict,
             end = dataset_index * batch_size + local_size
             dset_out[start:end, :] = dataset['corrected_data']
 
-            if dataset['corrected_raw'] is not None:
+            if save_raw:
                 raw_out[
                         dataset_index
                         * batch_size:dataset_index
@@ -349,7 +351,8 @@ class core_inferrence:
                         self.output_file,
                         raw_dataset_name,
                         output_dataset_name,
-                        self.batch_size)
+                        self.batch_size,
+                        self.save_raw)
 
         for p in process_list:
             p.join()
@@ -359,7 +362,8 @@ class core_inferrence:
             self.output_file,
             raw_dataset_name,
             output_dataset_name,
-            self.batch_size)
+            self.batch_size,
+            self.save_raw)
 
         print("done with core_inference")
         duration = time.time()-sfd_t0
