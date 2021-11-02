@@ -237,6 +237,8 @@ def write_output_to_file(output_dict,
                          output_dataset_name,
                          batch_size,
                          save_raw):
+    logger.info(f'writing {len(output_dict)} datasets')
+
     index_list = list(output_dict.keys())
 
     with h5py.File(output_file_path, 'a') as out_file:
