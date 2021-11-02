@@ -225,25 +225,30 @@ def core_inference_worker(
 
 
 def write_output_to_file(output_dict,
-                         raw_out,
-                         dset_out,
+                         output_file_path,
+                         raw_dataset_name,
+                         output_dataset_name,
                          batch_size):
     index_list = list(output_dict.keys())
-    for dataset_index in index_list:
-        dataset = output_dict.pop(dataset_index)
-        local_size = dataset['corrected_data'].shape[0]
-        start = dataset_index * batch_size
-        end = dataset_index * batch_size + local_size
-        dset_out[start:end, :] = dataset['corrected_data']
 
-        if dataset['corrected_raw'] is not None:
-            raw_out[
-                    dataset_index
-                    * batch_size:dataset_index
-                    * batch_size
-                    + local_size,
-                    :,
-             ] = dataset['corrected_raw']
+    with h5py.File(output_file_path, 'a') as out_file:
+        raw_out = out_file[raw_dataset_name]
+        dset_out = out_file[output_dataset_name]
+        for dataset_index in index_list:
+            dataset = output_dict.pop(dataset_index)
+            local_size = dataset['corrected_data'].shape[0]
+            start = dataset_index * batch_size
+            end = dataset_index * batch_size + local_size
+            dset_out[start:end, :] = dataset['corrected_data']
+
+            if dataset['corrected_raw'] is not None:
+                raw_out[
+                        dataset_index
+                        * batch_size:dataset_index
+                        * batch_size
+                        + local_size,
+                        :,
+                 ] = dataset['corrected_raw']
 
     return output_dict
 
@@ -292,63 +297,69 @@ class core_inferrence:
         output_lock = mgr.Lock()
         process_list = []
 
+
+        output_dataset_name = "data"
+        raw_dataset_name = "raw"
+
         with h5py.File(self.output_file, "w") as file_handle:
-            dset_out = file_handle.create_dataset(
-                "data",
+            file_handle.create_dataset(
+                output_dataset_name,
                 shape=tuple(final_shape),
                 chunks=tuple(chunk_size),
                 dtype="float32",
             )
 
             if self.save_raw:
-                raw_out = file_handle.create_dataset(
-                    "raw",
+                file_handle.create_dataset(
+                    raw_dataset_name,
                     shape=tuple(final_shape),
                     chunks=tuple(chunk_size),
                     dtype="float32",
                 )
 
-            for index_dataset in np.arange(0, self.nb_datasets, 1):
-                local_data = self.generator_obj.__getitem__(index_dataset)
-                local_mean, local_std = \
-                    self.generator_obj.__get_norm_parameters__(index_dataset)
+        for index_dataset in np.arange(0, self.nb_datasets, 1):
+            local_data = self.generator_obj.__getitem__(index_dataset)
+            local_mean, local_std = \
+                self.generator_obj.__get_norm_parameters__(index_dataset)
 
-                this_batch = dict()
-                this_batch[index_dataset] = dict()
-                this_batch[index_dataset]['local_data'] = local_data
-                this_batch[index_dataset]['local_mean'] = local_mean
-                this_batch[index_dataset]['local_std'] = local_std
+            this_batch = dict()
+            this_batch[index_dataset] = dict()
+            this_batch[index_dataset]['local_data'] = local_data
+            this_batch[index_dataset]['local_mean'] = local_mean
+            this_batch[index_dataset]['local_std'] = local_std
 
-                process = multiprocessing.Process(
-                            target=core_inference_worker,
-                            args=(self.json_data,
-                                  this_batch,
-                                  self.rescale,
-                                  self.save_raw,
-                                  output_dict,
-                                  output_lock))
+            process = multiprocessing.Process(
+                        target=core_inference_worker,
+                        args=(self.json_data,
+                              this_batch,
+                              self.rescale,
+                              self.save_raw,
+                              output_dict,
+                              output_lock))
 
-                process.start()
-                process_list.append(process)
-                while len(process_list) >= n_parallel_workers:
-                    process_list = _winnow_process_list(process_list)
+            process.start()
+            process_list.append(process)
+            while len(process_list) >= n_parallel_workers:
+                process_list = _winnow_process_list(process_list)
 
-                if len(output_dict) >= 8:
-                    with output_lock:
-                        write_output_to_file(
-                            output_dict,
-                            raw_out,
-                            dset_out,
-                            self.batch_size)
+            if len(output_dict) >= 10*n_parallel_workers:
+                with output_lock:
+                    write_output_to_file(
+                        output_dict,
+                        self.output_file,
+                        raw_dataset_name,
+                        output_dataset_name,
+                        self.batch_size)
 
-            for p in process_list:
-                p.join()
+        for p in process_list:
+            p.join()
 
-            write_output_to_file(
-                output_dict,
-                raw_out,
-                dset_out,
-                self.batch_size)
+        write_output_to_file(
+            output_dict,
+            self.output_file,
+            raw_dataset_name,
+            output_dataset_name,
+            self.batch_size)
 
         print("done with core_inference")
         duration = time.time()-sfd_t0
