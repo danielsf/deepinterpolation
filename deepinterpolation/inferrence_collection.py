@@ -15,6 +15,8 @@ import os
 
 import time
 
+import logging
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 tensorflow.config.threading.set_inter_op_parallelism_threads(1)
@@ -22,6 +24,11 @@ tensorflow.config.threading.set_intra_op_parallelism_threads(1)
 
 tensorflow.compat.v1.logging.set_verbosity(
     tensorflow.compat.v1.logging.ERROR)
+
+
+logger = logging.getLogger(__name__)
+logging.captureWarnings(True)
+logging.basicConfig(level=logging.INFO)
 
 
 class fmri_inferrence:
@@ -282,10 +289,10 @@ class core_inferrence:
         self.indiv_shape = self.generator_obj.get_output_size()
 
     def run(self):
-        sfd_t0 = time.time()
-        print("starting core inference")
-        print(f"nb_datasets: {self.nb_datasets}")
-        print(f"batch_size: {self.batch_size}")
+        global_t0 = time.time()
+        logger.info("starting core inference")
+        logger.info(f"nb_datasets: {self.nb_datasets}")
+        logger.info(f"batch_size: {self.batch_size}")
         final_shape = [self.nb_datasets * self.batch_size]
         final_shape.extend(self.indiv_shape)
 
@@ -319,6 +326,11 @@ class core_inferrence:
                     dtype="float32",
                 )
 
+        ct = 0
+        n_written = 0
+        log_every = 100
+        if self.nb_datasets < log_every:
+            log_every = 5
         for index_dataset in np.arange(0, self.nb_datasets, 1):
             local_data = self.generator_obj.__getitem__(index_dataset)
             local_mean, local_std = \
@@ -340,12 +352,25 @@ class core_inferrence:
                               output_lock))
 
             process.start()
+            ct += 1
             process_list.append(process)
+
+            if ct % log_every == 0:
+                duration = time.time()-global_t0
+                n_done = max(1, len(output_dict)+n_written)
+                per = duration/n_done
+                prediction = per*self.nb_datasets
+                msg = f'{n_done} datasets in {duration:.2e} seconds '
+                msg += f' -- predict {prediction-duration:.2e} '
+                msg += f'remaining of {prediction:.2e}'
+                logger.info(msg)
+
             while len(process_list) >= n_parallel_workers:
                 process_list = _winnow_process_list(process_list)
 
             if len(output_dict) >= max(1, self.nb_datasets//8):
                 with output_lock:
+                    n0 = len(output_dict)
                     write_output_to_file(
                         output_dict,
                         self.output_file,
@@ -353,7 +378,9 @@ class core_inferrence:
                         output_dataset_name,
                         self.batch_size,
                         self.save_raw)
+                    n_written += n0-len(output_dict)
 
+        logger.info('processing last datasets')
         for p in process_list:
             p.join()
 
@@ -365,6 +392,5 @@ class core_inferrence:
             self.batch_size,
             self.save_raw)
 
-        print("done with core_inference")
-        duration = time.time()-sfd_t0
-        print(f"core_inference took {duration:.2e} seconds")
+        duration = time.time()-global_t0
+        logger.info(f"core_inference took {duration:.2e} seconds")
