@@ -342,7 +342,7 @@ class core_inferrence:
             while len(process_list) >= n_parallel_workers:
                 process_list = _winnow_process_list(process_list)
 
-            if len(output_dict) >= 10*n_parallel_workers:
+            if len(output_dict) >= max(1, self.nb_datasets//8):
                 with output_lock:
                     write_output_to_file(
                         output_dict,
