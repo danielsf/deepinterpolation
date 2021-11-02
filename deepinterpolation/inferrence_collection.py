@@ -188,7 +188,8 @@ def core_inference_worker(
         json_data,
         input_lookup,
         rescale,
-        save_raw):
+        save_raw,
+        output_dict):
 
     model = load_model_worker(json_data)
     local_output = {}
@@ -215,7 +216,9 @@ def core_inference_worker(
             corrected_raw = None
         local_output[dataset_index] = {'corrected_raw': corrected_raw,
                                        'corrected_data': corrected_data}
-    return local_output
+    index_list = list(local_output.keys())
+    for data_index in index_list:
+        output_dict[data_index] = local_output.pop(data_index)
 
 
 def write_output_to_file(output_dict,
@@ -279,6 +282,12 @@ class core_inferrence:
         chunk_size = [1]
         chunk_size.extend(self.indiv_shape)
 
+        n_parallel_workers = self.json_data['n_parallel_workers']
+
+        mgr = multiprocessing.Manager()
+        output_dict = mgr.dict()
+        process_list = []
+
         with h5py.File(self.output_file, "w") as file_handle:
             dset_out = file_handle.create_dataset(
                 "data",
@@ -306,17 +315,35 @@ class core_inferrence:
                 this_batch[index_dataset]['local_mean'] = local_mean
                 this_batch[index_dataset]['local_std'] = local_std
 
-                result = core_inference_worker(
-                             self.json_data,
-                             this_batch,
-                             self.rescale,
-                             self.save_raw)
+                process = multiprocessing.Process(
+                            target=core_inference_worker,
+                            args=(self.json_data,
+                                  this_batch,
+                                  self.rescale,
+                                  self.save_raw,
+                                  output_dict))
 
-                write_output_to_file(
-                    result,
-                    raw_out,
-                    dset_out,
-                    self.batch_size)
+                process.start()
+                process_list.append(process)
+                if len(process_list) >= n_parallel_workers:
+                    for p in process_list:
+                        p.join()
+                    process_list = []
+
+                    write_output_to_file(
+                        output_dict,
+                        raw_out,
+                        dset_out,
+                        self.batch_size)
+
+            for p in process_list:
+                p.join()
+
+            write_output_to_file(
+                output_dict,
+                raw_out,
+                dset_out,
+                self.batch_size)
 
         print("done with core_inference")
         duration = time.time()-sfd_t0
