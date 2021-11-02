@@ -211,6 +211,30 @@ def core_inference_worker(
     return local_output
 
 
+def write_output_to_file(output_dict,
+                         raw_out,
+                         dset_out,
+                         batch_size):
+    index_list = list(output_dict.keys())
+    for dataset_index in index_list:
+        dataset = output_dict.pop(dataset_index)
+        local_size = dataset['corrected_data'].shape[0]
+        start = dataset_index * batch_size
+        end = dataset_index * batch_size + local_size
+        dset_out[start:end, :] = dataset['corrected_data']
+
+        if dataset['corrected_raw'] is not None:
+            raw_out[
+                    dataset_index
+                    * batch_size:dataset_index
+                    * batch_size
+                    + local_size,
+                    :,
+             ] = dataset['corrected_raw']
+
+    return output_dict
+
+
 class core_inferrence:
     # This is the generic inferrence class
     def __init__(self, inferrence_json_path, generator_obj):
@@ -281,21 +305,12 @@ class core_inferrence:
                              self.rescale,
                              self.save_raw)
 
-                local_size = result[index_dataset]['corrected_data'].shape[0]
+                write_output_to_file(
+                    result,
+                    raw_out,
+                    dset_out,
+                    self.batch_size)
 
-                if self.save_raw:
-
-                    raw_out[
-                        index_dataset
-                        * self.batch_size:index_dataset
-                        * self.batch_size
-                        + local_size,
-                        :,
-                    ] = result[index_dataset]['corrected_raw']
-
-                start = index_dataset * self.batch_size
-                end = index_dataset * self.batch_size + local_size
-                dset_out[start:end, :] = result[index_dataset]['corrected_data']
         print("done with core_inference")
         duration = time.time()-sfd_t0
         print(f"core_inference took {duration:.2e} seconds")
