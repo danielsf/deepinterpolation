@@ -177,6 +177,40 @@ def __load_model_from_mlflow(json_data):
     return model
 
 
+def core_inference_worker(
+        json_data,
+        input_lookup,
+        rescale,
+        save_raw):
+
+    model = load_model_worker(json_data)
+    local_output = {}
+    for dataset_index in input_lookup:
+        local_lookup = input_lookup[dataset_index]
+        local_data = local_lookup['local_data']
+        local_mean = local_lookup['local_mean']
+        local_std = local_lookup['local_std']
+
+        predictions_data = model.predict(local_data[0])
+        local_size = predictions_data.shape[0]
+
+        if rescale:
+            corrected_data = predictions_data * local_std + local_mean
+        else:
+            corrected_data = predictions_data
+
+        if save_raw:
+            if rescale:
+                corrected_raw = local_data[1] * local_std + local_mean
+            else:
+                corrected_raw = local_data[1]
+        else:
+            corrected_raw = None
+        local_output[dataset_index] = {'corrected_raw': corrected_raw,
+                                       'corrected_data': corrected_data}
+    return local_output
+
+
 class core_inferrence:
     # This is the generic inferrence class
     def __init__(self, inferrence_json_path, generator_obj):
@@ -232,25 +266,24 @@ class core_inferrence:
 
             for index_dataset in np.arange(0, self.nb_datasets, 1):
                 local_data = self.generator_obj.__getitem__(index_dataset)
-
-                model = load_model_worker(self.json_data)
-
-                predictions_data = model.predict(local_data[0])
-
                 local_mean, local_std = \
                     self.generator_obj.__get_norm_parameters__(index_dataset)
-                local_size = predictions_data.shape[0]
 
-                if self.rescale:
-                    corrected_data = predictions_data * local_std + local_mean
-                else:
-                    corrected_data = predictions_data
+                this_batch = dict()
+                this_batch[index_dataset] = dict()
+                this_batch[index_dataset]['local_data'] = local_data
+                this_batch[index_dataset]['local_mean'] = local_mean
+                this_batch[index_dataset]['local_std'] = local_std
+
+                result = core_inference_worker(
+                             self.json_data,
+                             this_batch,
+                             self.rescale,
+                             self.save_raw)
+
+                local_size = result[index_dataset]['corrected_data'].shape[0]
 
                 if self.save_raw:
-                    if self.rescale:
-                        corrected_raw = local_data[1] * local_std + local_mean
-                    else:
-                        corrected_raw = local_data[1]
 
                     raw_out[
                         index_dataset
@@ -258,11 +291,11 @@ class core_inferrence:
                         * self.batch_size
                         + local_size,
                         :,
-                    ] = corrected_raw
+                    ] = result[index_dataset]['corrected_raw']
 
                 start = index_dataset * self.batch_size
                 end = index_dataset * self.batch_size + local_size
-                dset_out[start:end, :] = corrected_data
+                dset_out[start:end, :] = result[index_dataset]['corrected_data']
         print("done with core_inference")
         duration = time.time()-sfd_t0
         print(f"core_inference took {duration:.2e} seconds")
