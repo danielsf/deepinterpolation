@@ -7,6 +7,12 @@ from pathlib import Path
 from deepinterpolation.cli.schemas import InferenceInputSchema
 from deepinterpolation.generic import ClassLoader
 
+import logging
+
+logger = logging.getLogger(__name__)
+logging.captureWarnings(True)
+logging.basicConfig(level=logging.INFO)
+
 
 def normalize_uint16_output(input_file: Path,
                             output_file: Path,
@@ -46,6 +52,8 @@ def normalize_uint16_output(input_file: Path,
 
     with h5py.File(output_file, "r") as f:
         out = f["data"][()].squeeze()
+
+    logger.info(f'reading in data ({out.min()}, {out.max()})')
 
     if scale_to_uint:
         out = (out - out.min()) * inmax / out.ptp()
