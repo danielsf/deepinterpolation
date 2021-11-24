@@ -42,10 +42,10 @@ def normalize_uint16_output(input_file: Path,
     with h5py.File(output_file, "r") as f:
         out = f["data"][()].squeeze()
 
-    out = (out - out.min()) * inmax / out.ptp()
-    out = out.astype('uint16')
+    out = np.round(out).astype(int)
+
     nextra = inshape[0] - out.shape[0]
-    dextra = np.zeros((nextra, *out.shape[1:]), dtype='uint16')
+    dextra = np.zeros((nextra, *out.shape[1:]), dtype=int)
     out = np.concatenate((out, dextra), axis=0)
     return out
 
