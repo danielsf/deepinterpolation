@@ -9,8 +9,7 @@ from deepinterpolation.generic import ClassLoader
 
 
 def normalize_uint16_output(input_file: Path,
-                            output_file: Path,
-                            scale_to_uint: bool) -> np.ndarray:
+                            output_file: Path) -> np.ndarray:
     """function to globally normalize and convert datatype of output
     movies. The output movie is shifted to be >=0 and scaled to the
     same max value as the input movie. The movie is zero-padded at the
@@ -40,22 +39,23 @@ def normalize_uint16_output(input_file: Path,
 
     """
     with h5py.File(input_file, "r") as f:
-        if scale_to_uint:
-            inmax = f["data"][()].max()
-        inshape = f["data"].shape
+        indata = f["data"][()]
+        inmax = indata.max()
+        inmin = indata.min()
+        indtype = indata.dtype
+        inshape = indata.shape
+    del indata
 
     with h5py.File(output_file, "r") as f:
         out = f["data"][()].squeeze()
 
-    if scale_to_uint:
-        out = (out - out.min()) * inmax / out.ptp()
-        out = out.astype(np.uint16)
-        _dtype = np.uint16
-    else:
-        out = np.round(out).astype(int)
-        _dtype = int
+    outmin = out.min()
+    out_delta = out.max()-outmin
+    in_delta = inmax-inmin
+    out = inmin + (out - outmin) * in_delta / out_delta
+    out = out.astype(indtype)
     nextra = inshape[0] - out.shape[0]
-    dextra = np.zeros((nextra, *out.shape[1:]), dtype=_dtype)
+    dextra = np.zeros((nextra, *out.shape[1:]), dtype=indtype)
     out = np.concatenate((out, dextra), axis=0)
     return out
 
@@ -109,8 +109,7 @@ class Inference(argschema.ArgSchemaParser):
             self.logger.info("fixing up the range and shape of the result")
             data = normalize_uint16_output(
                     Path(self.args["generator_params"]["train_path"]),
-                    Path(self.args["inference_params"]["output_file"]),
-                    self.args['inference_params']['scale_to_uint'])
+                    Path(self.args["inference_params"]["output_file"]))
             with h5py.File(
                     self.args["inference_params"]["output_file"], "w") as f:
                 f.create_dataset("data", data=data)
