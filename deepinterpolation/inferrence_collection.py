@@ -11,13 +11,11 @@ from deepinterpolation.utils import _winnow_process_list
 
 import tensorflow.config.threading
 import tensorflow.compat.v1.logging
-import os
 
 import time
 
 import logging
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 tensorflow.config.threading.set_inter_op_parallelism_threads(1)
 tensorflow.config.threading.set_intra_op_parallelism_threads(1)
