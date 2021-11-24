@@ -110,7 +110,7 @@ class Inference(argschema.ArgSchemaParser):
             data = normalize_uint16_output(
                     Path(self.args["generator_params"]["train_path"]),
                     Path(self.args["inference_params"]["output_file"]),
-                    self.args['scale_to_uint'])
+                    self.args['inference_params']['scale_to_uint'])
             with h5py.File(
                     self.args["inference_params"]["output_file"], "w") as f:
                 f.create_dataset("data", data=data)
