@@ -9,7 +9,8 @@ from deepinterpolation.generic import ClassLoader
 
 
 def normalize_uint16_output(input_file: Path,
-                            output_file: Path) -> np.ndarray:
+                            output_file: Path,
+                            scale_to_uint: bool) -> np.ndarray:
     """function to globally normalize and convert datatype of output
     movies. The output movie is shifted to be >=0 and scaled to the
     same max value as the input movie. The movie is zero-padded at the
@@ -23,6 +24,9 @@ def normalize_uint16_output(input_file: Path,
     output_file: Path
         the post-denoising movie. It is floating point and needs to
         be scaled and type converted
+    scale_to_uint: bool
+        If True, scale to range of original data and save as uint,
+        rather than int.
 
     Returns
     -------
@@ -36,16 +40,22 @@ def normalize_uint16_output(input_file: Path,
 
     """
     with h5py.File(input_file, "r") as f:
-        inmax = f["data"][()].max()
+        if scale_to_uint:
+            inmax = f["data"][()].max()
         inshape = f["data"].shape
 
     with h5py.File(output_file, "r") as f:
         out = f["data"][()].squeeze()
 
-    out = (out - out.min()) * inmax / out.ptp()
-    out = out.astype('uint16')
+    if scale_to_uint:
+        out = (out - out.min()) * inmax / out.ptp()
+        out = out.astype(np.uint16)
+        _dtype = np.uint16
+    else:
+        out = np.round(out).astype(int)
+        _dtype = int
     nextra = inshape[0] - out.shape[0]
-    dextra = np.zeros((nextra, *out.shape[1:]), dtype='uint16')
+    dextra = np.zeros((nextra, *out.shape[1:]), dtype=_dtype)
     out = np.concatenate((out, dextra), axis=0)
     return out
 
@@ -99,7 +109,8 @@ class Inference(argschema.ArgSchemaParser):
             self.logger.info("fixing up the range and shape of the result")
             data = normalize_uint16_output(
                     Path(self.args["generator_params"]["train_path"]),
-                    Path(self.args["inference_params"]["output_file"]))
+                    Path(self.args["inference_params"]["output_file"]),
+                    self.args['scale_to_uint'])
             with h5py.File(
                     self.args["inference_params"]["output_file"], "w") as f:
                 f.create_dataset("data", data=data)

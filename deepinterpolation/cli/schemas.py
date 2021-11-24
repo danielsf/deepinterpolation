@@ -249,6 +249,12 @@ class InferenceSchema(argschema.schemas.DefaultSchema):
         )
     )
 
+    scale_to_uint = argschema.fields.Boolean(
+        required=True,
+        default=None,
+        allow_none=True,
+        description=("Whether or not to scale output to uint16"))
+
 
 class InferenceInputSchema(argschema.ArgSchema):
     log_level = argschema.fields.LogLevel(default="INFO")
