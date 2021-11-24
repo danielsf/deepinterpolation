@@ -342,11 +342,6 @@ class core_inferrence:
             this_batch[index_dataset]['local_mean'] = local_mean
             this_batch[index_dataset]['local_std'] = local_std
 
-            msg = 'batch '
-            msg += f'({local_data[0].min()}, {local_data[0].max()}) -- '
-            msg += f'({local_data[1].min()}, {local_data[1].max()})'
-            logger.info(msg)
-
             process = multiprocessing.Process(
                         target=core_inference_worker,
                         args=(self.json_data,
