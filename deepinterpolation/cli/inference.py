@@ -40,8 +40,8 @@ def normalize_uint16_output(input_file: Path,
     """
     with h5py.File(input_file, "r") as f:
         indata = f["data"][()]
-        inmax = indata.max()
-        inmin = indata.min()
+        inmax = indata.max().astype(float)
+        inmin = indata.min().astype(float)
         indtype = indata.dtype
         inshape = indata.shape
     del indata
@@ -49,8 +49,8 @@ def normalize_uint16_output(input_file: Path,
     with h5py.File(output_file, "r") as f:
         out = f["data"][()].squeeze()
 
-    outmin = out.min()
-    out_delta = out.max()-outmin
+    outmin = out.min().astype(float)
+    out_delta = out.max().astype(float)-outmin
     in_delta = inmax-inmin
     out = inmin + (out - outmin) * in_delta / out_delta
     out = out.astype(indtype)
