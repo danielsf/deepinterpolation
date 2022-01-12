@@ -145,6 +145,13 @@ class GeneratorSchema(argschema.schemas.DefaultSchema):
             MultiContinuousTifGenerator)"
     )
 
+    cache_data = argschema.fields.Boolean(
+        required=False,
+        default=False,
+        description=("Only used by MovieJSONGenerator; if True "
+                     "datasets will be cached after first read "
+                     "and read from the cache on subsequent accesses"))
+
     batch_size = argschema.fields.Int(
         required=False,
         default=5,
