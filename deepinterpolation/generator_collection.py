@@ -9,6 +9,7 @@ import s3fs
 import glob
 import pathlib
 import copy
+import time
 from deepinterpolation.generic import JsonLoader
 
 
@@ -1138,6 +1139,7 @@ class MovieJSONGenerator(DeepGenerator):
                 self.frame_lookup[(video_tag, img_index)] = this_dict
 
     def _cache_video_frames(self):
+        t0 = time.time()
         #raise RuntimeError('SFD says stop')
 
         # dimensions of the frames (this will need to be changed
@@ -1247,15 +1249,20 @@ class MovieJSONGenerator(DeepGenerator):
 
         self.video_img_to_cache = video_img_idx_to_location
         self.loaded_cache = ''
+        duration = time.time()-t0
+        print(f'caching took {duration:.2e} seconds')
 
     def _load_cache(self, cache_path):
         if cache_path == self.loaded_cache:
             return
+        t0 = time.time()
         print(f'reading from {pathlib.Path(cache_path).name}')
         with h5py.File(cache_path, 'r') as in_file:
             self._cached_input_frames = in_file['input_frames'][()]
             self._cached_output_frames = in_file['output_frames'][()]
         self.loaded_cache = cache_path
+        duration = time.time()-t0
+        print(f'reading took {duration:.2e} seconds')
 
     def _video_img_to_frames(self, video_tag, img_index):
         locale = self.video_img_to_cache[(video_tag, img_index)]
