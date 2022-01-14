@@ -1146,7 +1146,7 @@ class MovieJSONGenerator(DeepGenerator):
         ncols = 512
 
         # number of images to store per cache file
-        d_img = 4
+        d_img = 2000
 
         # Assign each i_img to a cache path
         cache_path_from_img_index = dict()
