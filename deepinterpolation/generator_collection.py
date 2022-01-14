@@ -1245,42 +1245,57 @@ class MovieJSONGenerator(DeepGenerator):
                     input_frame_chunk[cache_path] = []
                     output_frame_chunk[cache_path] = []
 
+        self.video_img_to_cache = video_img_idx_to_location
+        self.loaded_cache = ''
 
+    def _load_cache(self, cache_path):
+        if cache_path == self.loaded_cache:
+            return
+        print(f'reading from {pathlib.Path(cache_path).name}')
+        with h5py.File(cache_path, 'r') as in_file:
+            self._cached_input_frames = in_file['input_frames'][()]
+            self._cached_output_frames = in_file['output_frames'][()]
+        self.loaded_cache = cache_path
+
+    def _video_img_to_frames(self, video_tag, img_index):
+        locale = self.video_img_to_cache[(video_tag, img_index)]
+        self._load_cache(locale['path'])
+        input_slice = locale['input_frames']
+        output_slice = locale['output_frame']
+        return (self._cached_input_frames[input_slice[0]:input_slice[1], :, :],
+                self._cached_output_frames[output_slice])
 
     def _data_from_indexes(self, video_index, img_index):
         # Initialization
-        motion_path = self.frame_data_location[video_index]["path"]
-        print(f'opening {pathlib.Path(motion_path).name}')
-        with h5py.File(motion_path, "r") as movie_obj:
 
-            index_dict = self.frame_lookup[(video_index, img_index)]
-            input_index = index_dict['input_index']
-            output_frame = index_dict['output_frame']
+        #    index_dict = self.frame_lookup[(video_index, img_index)]
+        #    input_index = index_dict['input_index']
+        #    output_frame = index_dict['output_frame']
 
-            local_frame_data = self.frame_data_location[video_index]
-            local_mean = local_frame_data["mean"]
-            local_std = local_frame_data["std"]
+        local_frame_data = self.frame_data_location[video_index]
+        local_mean = local_frame_data["mean"]
+        local_std = local_frame_data["std"]
 
-            input_full = np.zeros(
-                [1, 512, 512, len(input_index)])
-            output_full = np.zeros([1, 512, 512, 1])
+        (data_img_input,
+         data_img_output) = self._video_img_to_frames(video_index, img_index)
 
-            data_img_input = movie_obj["data"][input_index, :, :]
-            data_img_output = movie_obj["data"][output_frame, :, :]
+        input_full = np.zeros(
+                [1, 512, 512, data_img_input.shape[0]])
+        output_full = np.zeros([1, 512, 512, 1])
 
-            data_img_input = np.swapaxes(data_img_input, 1, 2)
-            data_img_input = np.swapaxes(data_img_input, 0, 2)
+        data_img_input = np.swapaxes(data_img_input, 1, 2)
+        data_img_input = np.swapaxes(data_img_input, 0, 2)
 
-            img_in_shape = data_img_input.shape
-            img_out_shape = data_img_output.shape
+        img_in_shape = data_img_input.shape
+        img_out_shape = data_img_output.shape
 
-            data_img_input = (data_img_input.astype(
+        data_img_input = (data_img_input.astype(
                 "float") - local_mean) / local_std
-            data_img_output = (data_img_output.astype(
+        data_img_output = (data_img_output.astype(
                 "float") - local_mean) / local_std
-            input_full[0, : img_in_shape[0],
+        input_full[0, : img_in_shape[0],
                        : img_in_shape[1], :] = data_img_input
-            output_full[0, : img_out_shape[0],
+        output_full[0, : img_out_shape[0],
                         : img_out_shape[1], 0] = data_img_output
 
         return input_full, output_full
