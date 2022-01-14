@@ -1156,7 +1156,7 @@ class MovieJSONGenerator(DeepGenerator):
             cache_path = None
             str_path = None
             salt = 0
-            while cache_path is None or str_path in used_paths:
+            while cache_path is None or str_path in used_paths or cache_path.exists():
                 cache_path = self.tmp_dir / f"frame_cache_{i0}_{salt}.h5"
                 str_path = str(cache_path.resolve().absolute())
                 salt += 1
