@@ -189,6 +189,12 @@ class GeneratorSchema(argschema.schemas.DefaultSchema):
             the maximal number."
     )
 
+    tmp_dir = argschema.fields.OutputDir(
+            required=False,
+            default=None,
+            description=("dir for data cache files when training on ensemble "
+            "of movies"))
+
     @mm.pre_load
     def generator_specific_settings(self, data, **kwargs):
         # This is for backward compatibility
