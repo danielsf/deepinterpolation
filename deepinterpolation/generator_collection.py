@@ -8,6 +8,7 @@ import nibabel as nib
 import s3fs
 import glob
 import pathlib
+import copy
 from deepinterpolation.generic import JsonLoader
 
 
@@ -1047,6 +1048,12 @@ class MovieJSONGenerator(DeepGenerator):
 
         self._make_index_to_frames()
 
+        motion_path = self.frame_data_location[self.lims_id[0]]["path"]
+        with h5py.File(motion_path, 'r') as in_file:
+            self.video_dtype = in_file['data'].dtype
+
+        self._cache_video_frames()
+
     def __len__(self):
         "Denotes the total number of batches"
         return int(np.ceil(float(self.nb_lims
@@ -1129,6 +1136,116 @@ class MovieJSONGenerator(DeepGenerator):
                 this_dict = {'output_frame': output_frame,
                              'input_index': input_index}
                 self.frame_lookup[(video_tag, img_index)] = this_dict
+
+    def _cache_video_frames(self):
+        #raise RuntimeError('SFD says stop')
+
+        # dimensions of the frames (this will need to be changed
+        # to support different frame shapes)
+        nrows = 512
+        ncols = 512
+
+        # number of images to store per cache file
+        d_img = 4
+
+        # Assign each i_img to a cache path
+        cache_path_from_img_index = dict()
+        img_index_from_cache_path = dict()
+        used_paths = set()
+        for i0 in range(0, self.img_per_movie, d_img):
+            cache_path = None
+            str_path = None
+            salt = 0
+            while cache_path is None or str_path in used_paths:
+                cache_path = self.tmp_dir / f"frame_cache_{i0}_{salt}.h5"
+                str_path = str(cache_path.resolve().absolute())
+                salt += 1
+
+            used_paths.add(str_path)
+            img_index_from_cache_path[str_path] = []
+
+            for i_img in range(i0, i0+d_img, 1):
+                cache_path_from_img_index[i_img] = str_path
+                img_index_from_cache_path[str_path].append(i_img)
+
+        # create cache files, ensuring datasets have enough room
+        cache_path_list = list(img_index_from_cache_path.keys())
+        cache_path_list.sort()
+        for cache_path in cache_path_list:
+            n_input_frames = 0
+            n_output_frames = 0
+            i_img_set = set(img_index_from_cache_path[cache_path])
+            for key_pair in self.frame_lookup.keys():
+                if key_pair[1] in i_img_set:
+                    n_input_frames += len(self.frame_lookup[key_pair]['input_index'])
+                    n_output_frames += 1
+            with h5py.File(cache_path, 'w') as out_file:
+                out_file.create_dataset('input_frames',
+                                        data=np.zeros((n_input_frames,
+                                                       nrows,
+                                                       ncols),
+                                                      dtype=self.video_dtype),
+                                        chunks=(5, nrows, ncols))
+
+                out_file.create_dataset('output_frames',
+                                        data=np.zeros((n_output_frames,
+                                                       nrows,
+                                                       ncols),
+                                                      dtype=self.video_dtype),
+                                        chunks=(5, nrows, ncols))
+
+        # now we need to populate those files, periodically building up large
+        # chunks of frames and then flushing them as needed
+
+        i0_input_for_path = dict()
+        i0_output_for_path = dict()
+        input_frame_chunk = dict()
+        output_frame_chunk = dict()
+        for cache_path in cache_path_list:
+            i0_input_for_path[cache_path] = 0
+            i0_output_for_path[cache_path] = 0
+            input_frame_chunk[cache_path] = []
+            output_frame_chunk[cache_path] = []
+
+        video_img_idx_to_location = dict()
+        for video_tag in self.lims_id:
+            local_frame_data = self.frame_data_location[video_tag]
+            video_path = local_frame_data['path']
+            global_input_index = copy.deepcopy(i0_input_for_path)
+            global_output_index = copy.deepcopy(i0_output_for_path)
+            print(f'reading {pathlib.Path(video_path).name} for caching')
+            with h5py.File(video_path, 'r') as in_file:
+                for i_img in range(self.img_per_movie):
+                    index_dict = self.frame_lookup[(video_tag, i_img)]
+                    input_frames = in_file['data'][index_dict['input_index'],:,:]
+                    output_frame = in_file['data'][index_dict['output_frame'], :, :]
+                    cache_path = cache_path_from_img_index[i_img]
+                    n_input = input_frames.shape[0]
+                    i0 = i0_input_for_path[cache_path]
+                    locale = {'path': cache_path,
+                              'input_frames': (i0, i0+n_input),
+                              'output_frame': i0_output_for_path[cache_path]}
+                    video_img_idx_to_location[(video_tag, i_img)] = locale
+                    input_frame_chunk[cache_path].append(input_frames)
+                    output_frame_chunk[cache_path].append([output_frame])
+
+                    i0_input_for_path[cache_path] += n_input
+                    i0_output_for_path[cache_path] += 1
+
+            cache_path_list = list(i0_input_for_path.keys())
+            for cache_path in cache_path_list:
+                print(f'writing to {pathlib.Path(cache_path).name}')
+                with h5py.File(cache_path, 'a') as cache_handle:
+                    i0 = global_input_index[cache_path]
+                    i1 = i0_input_for_path[cache_path]
+                    cache_handle['input_frames'][i0:i1, :, :] = np.vstack(input_frame_chunk[cache_path])
+                    i0 = global_output_index[cache_path]
+                    i1 = i0_output_for_path[cache_path]
+                    cache_handle['output_frames'][i0:i1, :, :] = np.vstack(output_frame_chunk[cache_path])
+                    input_frame_chunk[cache_path] = []
+                    output_frame_chunk[cache_path] = []
+
+
 
     def _data_from_indexes(self, video_index, img_index):
         # Initialization
