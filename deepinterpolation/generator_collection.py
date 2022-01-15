@@ -1047,12 +1047,15 @@ class MovieJSONGenerator(DeepGenerator):
         self.img_per_movie = len(
             self.frame_data_location[self.lims_id[0]]["frames"])
 
+        print('making index to frames')
         self._make_index_to_frames()
 
+        print('getting movie dtype')
         motion_path = self.frame_data_location[self.lims_id[0]]["path"]
         with h5py.File(motion_path, 'r') as in_file:
             self.video_dtype = in_file['data'].dtype
 
+        print('about to call _cache_video_frames')
         self._cache_video_frames()
 
     def __len__(self):
@@ -1148,7 +1151,10 @@ class MovieJSONGenerator(DeepGenerator):
         ncols = 512
 
         # number of images to store per cache file
-        d_img = 2000
+        frames_per_cache = 160000
+        d_img = np.round(frames_per_cache/(60*len(self.lims_id))).astype(int)
+        d_img = max(1, d_img)
+        print(f'd_img is {d_img}')
 
         # Assign each i_img to a cache path
         cache_path_from_img_index = dict()
@@ -1163,6 +1169,7 @@ class MovieJSONGenerator(DeepGenerator):
                 str_path = str(cache_path.resolve().absolute())
                 salt += 1
 
+            print(f'using {str_path} as cache')
             used_paths.add(str_path)
             img_index_from_cache_path[str_path] = []
 
@@ -1170,10 +1177,15 @@ class MovieJSONGenerator(DeepGenerator):
                 cache_path_from_img_index[i_img] = str_path
                 img_index_from_cache_path[str_path].append(i_img)
 
+        print('got all the cache paths I need')
+        print(len(cache_path_from_img_index))
+        print(f'img_per_movie {self.img_per_movie}')
+        print(f'movies {len(self.lims_id)}')
         # create cache files, ensuring datasets have enough room
         cache_path_list = list(img_index_from_cache_path.keys())
         cache_path_list.sort()
         for cache_path in cache_path_list:
+            print(f'creating {cache_path}')
             n_input_frames = 0
             n_output_frames = 0
             i_img_set = set(img_index_from_cache_path[cache_path])
@@ -1181,6 +1193,7 @@ class MovieJSONGenerator(DeepGenerator):
                 if key_pair[1] in i_img_set:
                     n_input_frames += len(self.frame_lookup[key_pair]['input_index'])
                     n_output_frames += 1
+            print(f'need {n_input_frames}, {n_output_frames}')
             with h5py.File(cache_path, 'w') as out_file:
                 out_file.create_dataset('input_frames',
                                         data=np.zeros((n_input_frames,
@@ -1195,6 +1208,7 @@ class MovieJSONGenerator(DeepGenerator):
                                                        ncols),
                                                       dtype=self.video_dtype),
                                         chunks=(5, nrows, ncols))
+        print('created empty caches')
 
         # now we need to populate those files, periodically building up large
         # chunks of frames and then flushing them as needed
@@ -1236,7 +1250,7 @@ class MovieJSONGenerator(DeepGenerator):
 
             cache_path_list = list(i0_input_for_path.keys())
             for cache_path in cache_path_list:
-                print(f'writing to {pathlib.Path(cache_path).name}')
+                #print(f'writing to {pathlib.Path(cache_path).name}')
                 with h5py.File(cache_path, 'a') as cache_handle:
                     i0 = global_input_index[cache_path]
                     i1 = i0_input_for_path[cache_path]
@@ -1250,7 +1264,7 @@ class MovieJSONGenerator(DeepGenerator):
         self.video_img_to_cache = video_img_idx_to_location
         self.loaded_cache = ''
         duration = time.time()-t0
-        print(f'caching took {duration:.2e} seconds')
+        print(f'caching took {duration:.2e} seconds\n')
 
     def _load_cache(self, cache_path):
         if cache_path == self.loaded_cache:
