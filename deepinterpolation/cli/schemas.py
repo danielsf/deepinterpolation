@@ -189,6 +189,12 @@ class GeneratorSchema(argschema.schemas.DefaultSchema):
             the maximal number."
     )
 
+    tmp_dir = argschema.fields.OutputDir(
+            required=False,
+            default=None,
+            description=("dir for data cache files when training on ensemble "
+            "of movies"))
+
     @mm.pre_load
     def generator_specific_settings(self, data, **kwargs):
         # This is for backward compatibility
@@ -332,6 +338,15 @@ class InferenceSchema(argschema.schemas.DefaultSchema):
             DeepInterpolation networks initially rescale all datasets within \
             -1 to 1 for training."
         ),
+    )
+
+    n_parallel_workers = argschema.fields.Integer(
+        required=False,
+        default=8,
+        description=(
+            "Number of parallel workers to use when farming out "
+            "inference work"
+        )
     )
 
 
@@ -573,6 +588,12 @@ class FineTuningSchema(argschema.schemas.DefaultSchema):
         description="Period in number of epochs to periodically save model \
             checkpoints.",
     )
+
+    nb_workers = argschema.fields.Int(
+        required=False,
+        default=None,
+        allow_none=True,
+        description="Number of workers passed to model.fit")
 
 
 class NetworkSchema(argschema.schemas.DefaultSchema):

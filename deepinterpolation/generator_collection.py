@@ -7,6 +7,9 @@ import tifffile
 import nibabel as nib
 import s3fs
 import glob
+import pathlib
+import copy
+import time
 from deepinterpolation.generic import JsonLoader
 
 
@@ -899,6 +902,8 @@ class OphysGenerator(SequentialGenerator):
         "Initialization"
         super().__init__(json_path)
 
+        self._movie_data = None
+
         if "from_s3" in self.json_data.keys():
             self.from_s3 = self.json_data["from_s3"]
         else:
@@ -912,24 +917,30 @@ class OphysGenerator(SequentialGenerator):
 
         self.batch_size = self.json_data["batch_size"]
 
-        if self.from_s3:
-            s3_filesystem = s3fs.S3FileSystem()
-            raw_data = h5py.File(
-                s3_filesystem.open(self.raw_data_file, "rb"), "r")["data"]
-        else:
-            raw_data = h5py.File(self.raw_data_file, "r")["data"]
-
-        self.total_frame_per_movie = int(raw_data.shape[0])
+        self.total_frame_per_movie = int(self.movie_data.shape[0])
 
         self._update_end_frame(self.total_frame_per_movie)
         self._calculate_list_samples(self.total_frame_per_movie)
 
-        average_nb_samples = np.min([int(raw_data.shape[0]), 1000])
-        local_data = raw_data[0:average_nb_samples, :, :].flatten()
+        average_nb_samples = np.min([int(self.movie_data.shape[0]), 1000])
+        local_data = self.movie_data[0:average_nb_samples, :, :].flatten()
         local_data = local_data.astype("float32")
 
         self.local_mean = np.mean(local_data)
         self.local_std = np.std(local_data)
+
+    @property
+    def movie_data(self):
+        if self._movie_data is None:
+            if self.from_s3:
+                s3_filesystem = s3fs.S3FileSystem()
+                with h5py.File(s3_filesystem.open(
+                         self.raw_data_file, "rb"), "r") as movie_obj:
+                    self._movie_data = movie_obj['data'][()]
+            else:
+                with h5py.File(self.raw_data_file, "r") as movie_obj:
+                    self._movie_data = movie_obj['data'][()]
+        return self._movie_data
 
     def __getitem__(self, index):
         shuffle_indexes = self.generate_batch_indexes(index)
@@ -952,13 +963,6 @@ class OphysGenerator(SequentialGenerator):
     def __data_generation__(self, index_frame):
         "Generates data containing batch_size samples"
 
-        if self.from_s3:
-            s3_filesystem = s3fs.S3FileSystem()
-            movie_obj = h5py.File(s3_filesystem.open(
-                self.raw_data_file, "rb"), "r")
-        else:
-            movie_obj = h5py.File(self.raw_data_file, "r")
-
         input_full = np.zeros([1, 512, 512, self.pre_frame + self.post_frame])
         output_full = np.zeros([1, 512, 512, 1])
 
@@ -974,8 +978,8 @@ class OphysGenerator(SequentialGenerator):
             input_index = input_index[input_index !=
                                       index_frame + index_padding]
 
-        data_img_input = movie_obj["data"][input_index, :, :]
-        data_img_output = movie_obj["data"][index_frame, :, :]
+        data_img_input = self.movie_data[input_index, :, :]
+        data_img_output = self.movie_data[index_frame, :, :]
 
         data_img_input = np.swapaxes(data_img_input, 1, 2)
         data_img_input = np.swapaxes(data_img_input, 0, 2)
@@ -993,7 +997,6 @@ class OphysGenerator(SequentialGenerator):
         input_full[0, : img_in_shape[0], : img_in_shape[1], :] = data_img_input
         output_full[0, : img_out_shape[0],
                     : img_out_shape[1], 0] = data_img_output
-        movie_obj.close()
 
         return input_full, output_full
 
@@ -1020,6 +1023,8 @@ class MovieJSONGenerator(DeepGenerator):
         self.steps_per_epoch = self.json_data["steps_per_epoch"]
         self.epoch_index = 0
 
+        self.tmp_dir = pathlib.Path(self.json_data["tmp_dir"])
+
         # For backward compatibility
         if "pre_post_frame" in self.json_data.keys():
             self.pre_frame = self.json_data["pre_post_frame"]
@@ -1041,6 +1046,17 @@ class MovieJSONGenerator(DeepGenerator):
         self.nb_lims = len(self.lims_id)
         self.img_per_movie = len(
             self.frame_data_location[self.lims_id[0]]["frames"])
+
+        print('making index to frames')
+        self._make_index_to_frames()
+
+        print('getting movie dtype')
+        motion_path = self.frame_data_location[self.lims_id[0]]["path"]
+        with h5py.File(motion_path, 'r') as in_file:
+            self.video_dtype = in_file['data'].dtype
+
+        print('about to call _cache_video_frames')
+        self._cache_video_frames()
 
     def __len__(self):
         "Denotes the total number of batches"
@@ -1098,6 +1114,213 @@ class MovieJSONGenerator(DeepGenerator):
 
         return local_mean, local_std
 
+    def _make_index_to_frames(self):
+        """
+        Construct a lookup that goes from video_index, img_index
+        to an index of input and outputframes
+        """
+        self.frame_lookup = dict()
+        for video_tag in self.lims_id:
+            local_frame_data = self.frame_data_location[video_tag]
+            for img_index in range(self.img_per_movie):
+                output_frame = local_frame_data["frames"][img_index]
+
+                input_index = np.arange(
+                    output_frame - self.pre_frame - self.pre_post_omission,
+                    output_frame + self.post_frame + self.pre_post_omission + 1,
+                )
+                input_index = input_index[input_index != output_frame]
+
+                for index_padding in np.arange(self.pre_post_omission + 1):
+                    input_index = input_index[input_index !=
+                                              output_frame - index_padding]
+                    input_index = input_index[input_index !=
+                                              output_frame + index_padding]
+
+                this_dict = {'output_frame': output_frame,
+                             'input_index': input_index}
+                self.frame_lookup[(video_tag, img_index)] = this_dict
+
+    def _cache_video_frames(self):
+        t0 = time.time()
+        #raise RuntimeError('SFD says stop')
+
+        # dimensions of the frames (this will need to be changed
+        # to support different frame shapes)
+        nrows = 512
+        ncols = 512
+
+        # number of images to store per cache file
+        frames_per_cache = 160000
+        d_img = np.round(frames_per_cache/(60*len(self.lims_id))).astype(int)
+        d_img = max(1, d_img)
+        print(f'd_img is {d_img}')
+
+        # Assign each i_img to a cache path
+        cache_path_from_img_index = dict()
+        img_index_from_cache_path = dict()
+        used_paths = set()
+        for i0 in range(0, self.img_per_movie, d_img):
+            cache_path = None
+            str_path = None
+            salt = 0
+            while cache_path is None or str_path in used_paths or cache_path.exists():
+                cache_path = self.tmp_dir / f"frame_cache_{i0}_{salt}.h5"
+                str_path = str(cache_path.resolve().absolute())
+                salt += 1
+
+            print(f'using {str_path} as cache')
+            used_paths.add(str_path)
+            img_index_from_cache_path[str_path] = []
+
+            for i_img in range(i0, i0+d_img, 1):
+                cache_path_from_img_index[i_img] = str_path
+                img_index_from_cache_path[str_path].append(i_img)
+
+        print('got all the cache paths I need')
+        print(len(cache_path_from_img_index))
+        print(f'img_per_movie {self.img_per_movie}')
+        print(f'movies {len(self.lims_id)}')
+        # create cache files, ensuring datasets have enough room
+        cache_path_list = list(img_index_from_cache_path.keys())
+        cache_path_list.sort()
+        for cache_path in cache_path_list:
+            print(f'creating {cache_path}')
+            n_input_frames = 0
+            n_output_frames = 0
+            i_img_set = set(img_index_from_cache_path[cache_path])
+            for key_pair in self.frame_lookup.keys():
+                if key_pair[1] in i_img_set:
+                    n_input_frames += len(self.frame_lookup[key_pair]['input_index'])
+                    n_output_frames += 1
+            print(f'need {n_input_frames}, {n_output_frames}')
+            with h5py.File(cache_path, 'w') as out_file:
+                out_file.create_dataset('input_frames',
+                                        data=np.zeros((n_input_frames,
+                                                       nrows,
+                                                       ncols),
+                                                      dtype=self.video_dtype),
+                                        chunks=(5, nrows, ncols))
+
+                out_file.create_dataset('output_frames',
+                                        data=np.zeros((n_output_frames,
+                                                       nrows,
+                                                       ncols),
+                                                      dtype=self.video_dtype),
+                                        chunks=(5, nrows, ncols))
+        print('created empty caches')
+
+        # now we need to populate those files, periodically building up large
+        # chunks of frames and then flushing them as needed
+
+        i0_input_for_path = dict()
+        i0_output_for_path = dict()
+        input_frame_chunk = dict()
+        output_frame_chunk = dict()
+        for cache_path in cache_path_list:
+            i0_input_for_path[cache_path] = 0
+            i0_output_for_path[cache_path] = 0
+            input_frame_chunk[cache_path] = []
+            output_frame_chunk[cache_path] = []
+
+        video_img_idx_to_location = dict()
+        for video_tag in self.lims_id:
+            local_frame_data = self.frame_data_location[video_tag]
+            video_path = local_frame_data['path']
+            global_input_index = copy.deepcopy(i0_input_for_path)
+            global_output_index = copy.deepcopy(i0_output_for_path)
+            print(f'reading {pathlib.Path(video_path).name} for caching')
+            with h5py.File(video_path, 'r') as in_file:
+                for i_img in range(self.img_per_movie):
+                    index_dict = self.frame_lookup[(video_tag, i_img)]
+                    input_frames = in_file['data'][index_dict['input_index'],:,:]
+                    output_frame = in_file['data'][index_dict['output_frame'], :, :]
+                    cache_path = cache_path_from_img_index[i_img]
+                    n_input = input_frames.shape[0]
+                    i0 = i0_input_for_path[cache_path]
+                    locale = {'path': cache_path,
+                              'input_frames': (i0, i0+n_input),
+                              'output_frame': i0_output_for_path[cache_path]}
+                    video_img_idx_to_location[(video_tag, i_img)] = locale
+                    input_frame_chunk[cache_path].append(input_frames)
+                    output_frame_chunk[cache_path].append([output_frame])
+
+                    i0_input_for_path[cache_path] += n_input
+                    i0_output_for_path[cache_path] += 1
+
+            cache_path_list = list(i0_input_for_path.keys())
+            for cache_path in cache_path_list:
+                #print(f'writing to {pathlib.Path(cache_path).name}')
+                with h5py.File(cache_path, 'a') as cache_handle:
+                    i0 = global_input_index[cache_path]
+                    i1 = i0_input_for_path[cache_path]
+                    cache_handle['input_frames'][i0:i1, :, :] = np.vstack(input_frame_chunk[cache_path])
+                    i0 = global_output_index[cache_path]
+                    i1 = i0_output_for_path[cache_path]
+                    cache_handle['output_frames'][i0:i1, :, :] = np.vstack(output_frame_chunk[cache_path])
+                    input_frame_chunk[cache_path] = []
+                    output_frame_chunk[cache_path] = []
+
+        self.video_img_to_cache = video_img_idx_to_location
+        self.loaded_cache = ''
+        duration = time.time()-t0
+        print(f'caching took {duration:.2e} seconds\n')
+
+    def _load_cache(self, cache_path):
+        if cache_path == self.loaded_cache:
+            return
+        t0 = time.time()
+        print(f'reading from {pathlib.Path(cache_path).name}')
+        with h5py.File(cache_path, 'r') as in_file:
+            self._cached_input_frames = in_file['input_frames'][()]
+            self._cached_output_frames = in_file['output_frames'][()]
+        self.loaded_cache = cache_path
+        duration = time.time()-t0
+        print(f'reading took {duration:.2e} seconds')
+
+    def _video_img_to_frames(self, video_tag, img_index):
+        locale = self.video_img_to_cache[(video_tag, img_index)]
+        self._load_cache(locale['path'])
+        input_slice = locale['input_frames']
+        output_slice = locale['output_frame']
+        return (self._cached_input_frames[input_slice[0]:input_slice[1], :, :],
+                self._cached_output_frames[output_slice])
+
+    def _data_from_indexes(self, video_index, img_index):
+        # Initialization
+
+        #    index_dict = self.frame_lookup[(video_index, img_index)]
+        #    input_index = index_dict['input_index']
+        #    output_frame = index_dict['output_frame']
+
+        local_frame_data = self.frame_data_location[video_index]
+        local_mean = local_frame_data["mean"]
+        local_std = local_frame_data["std"]
+
+        (data_img_input,
+         data_img_output) = self._video_img_to_frames(video_index, img_index)
+
+        input_full = np.zeros(
+                [1, 512, 512, data_img_input.shape[0]])
+        output_full = np.zeros([1, 512, 512, 1])
+
+        data_img_input = np.swapaxes(data_img_input, 1, 2)
+        data_img_input = np.swapaxes(data_img_input, 0, 2)
+
+        img_in_shape = data_img_input.shape
+        img_out_shape = data_img_output.shape
+
+        data_img_input = (data_img_input.astype(
+                "float") - local_mean) / local_std
+        data_img_output = (data_img_output.astype(
+                "float") - local_mean) / local_std
+        input_full[0, : img_in_shape[0],
+                       : img_in_shape[1], :] = data_img_input
+        output_full[0, : img_out_shape[0],
+                        : img_out_shape[1], 0] = data_img_output
+
+        return input_full, output_full
+
     def __data_generation__(self, index_frame):
         "Generates data containing batch_size samples"
 
@@ -1106,61 +1329,8 @@ class MovieJSONGenerator(DeepGenerator):
             local_lims, local_img = self.get_lims_id_sample_from_index(
                 index_frame)
 
-            # Initialization
-            local_path = self.frame_data_location[local_lims]["path"]
+            return self._data_from_indexes(local_lims, local_img)
 
-            _filenames = ["motion_corrected_video.h5", "concat_31Hz_0.h5"]
-            motion_path = []
-            for _filename in _filenames:
-                _filepath = os.path.join(local_path, "processed", _filename)
-                if os.path.exists(_filepath) and not os.path.islink(
-                    _filepath
-                ):  # Path exists and is not symbolic
-                    motion_path = _filepath
-                    break
-
-            movie_obj = h5py.File(motion_path, "r")
-
-            local_frame_data = self.frame_data_location[local_lims]
-            output_frame = local_frame_data["frames"][local_img]
-            local_mean = local_frame_data["mean"]
-            local_std = local_frame_data["std"]
-
-            input_full = np.zeros(
-                [1, 512, 512, self.pre_frame + self.post_frame])
-            output_full = np.zeros([1, 512, 512, 1])
-
-            input_index = np.arange(
-                output_frame - self.pre_frame - self.pre_post_omission,
-                output_frame + self.post_frame + self.pre_post_omission + 1,
-            )
-            input_index = input_index[input_index != output_frame]
-
-            for index_padding in np.arange(self.pre_post_omission + 1):
-                input_index = input_index[input_index !=
-                                          output_frame - index_padding]
-                input_index = input_index[input_index !=
-                                          output_frame + index_padding]
-
-            data_img_input = movie_obj["data"][input_index, :, :]
-            data_img_output = movie_obj["data"][output_frame, :, :]
-
-            data_img_input = np.swapaxes(data_img_input, 1, 2)
-            data_img_input = np.swapaxes(data_img_input, 0, 2)
-
-            img_in_shape = data_img_input.shape
-            img_out_shape = data_img_output.shape
-
-            data_img_input = (data_img_input.astype(
-                "float") - local_mean) / local_std
-            data_img_output = (data_img_output.astype(
-                "float") - local_mean) / local_std
-            input_full[0, : img_in_shape[0],
-                       : img_in_shape[1], :] = data_img_input
-            output_full[0, : img_out_shape[0],
-                        : img_out_shape[1], 0] = data_img_output
-            movie_obj.close()
-
-            return input_full, output_full
         except Exception:
             print("Issues with " + str(self.lims_id))
+            raise
