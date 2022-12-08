@@ -898,6 +898,13 @@ class OphysGenerator(SequentialGenerator):
         "Initialization"
         super().__init__(json_path)
 
+        self._movie_data = None
+
+        if "from_s3" in self.json_data.keys():
+            self.from_s3 = self.json_data["from_s3"]
+        else:
+            self.from_s3 = False
+
         # For backward compatibility
         if "train_path" in self.json_data.keys():
             self.raw_data_file = self.json_data["train_path"]
@@ -913,12 +920,25 @@ class OphysGenerator(SequentialGenerator):
         self._update_end_frame(self.total_frame_per_movie)
         self._calculate_list_samples(self.total_frame_per_movie)
 
-        average_nb_samples = np.min([int(raw_data.shape[0]), 1000])
-        local_data = raw_data[0:average_nb_samples, :, :].flatten()
+        average_nb_samples = np.min([int(self.movie_data.shape[0]), 1000])
+        local_data = self.movie_data[0:average_nb_samples, :, :].flatten()
         local_data = local_data.astype("float32")
 
         self.local_mean = np.mean(local_data)
         self.local_std = np.std(local_data)
+
+    @property
+    def movie_data(self):
+        if self._movie_data is None:
+            if self.from_s3:
+                s3_filesystem = s3fs.S3FileSystem()
+                with h5py.File(s3_filesystem.open(
+                         self.raw_data_file, "rb"), "r") as movie_obj:
+                    self._movie_data = movie_obj['data'][()]
+            else:
+                with h5py.File(self.raw_data_file, "r") as movie_obj:
+                    self._movie_data = movie_obj['data'][()]
+        return self._movie_data
 
     def __getitem__(self, index):
         shuffle_indexes = self.generate_batch_indexes(index)
@@ -957,8 +977,8 @@ class OphysGenerator(SequentialGenerator):
             input_index = input_index[input_index !=
                                       index_frame + index_padding]
 
-        data_img_input = movie_obj["data"][input_index, :, :]
-        data_img_output = movie_obj["data"][index_frame, :, :]
+        data_img_input = self.movie_data[input_index, :, :]
+        data_img_output = self.movie_data[index_frame, :, :]
 
         data_img_input = np.swapaxes(data_img_input, 1, 2)
         data_img_input = np.swapaxes(data_img_input, 0, 2)
@@ -976,7 +996,6 @@ class OphysGenerator(SequentialGenerator):
         input_full[0, : img_in_shape[0], : img_in_shape[1], :] = data_img_input
         output_full[0, : img_out_shape[0],
                     : img_out_shape[1], 0] = data_img_output
-        movie_obj.close()
 
         return input_full, output_full
 
