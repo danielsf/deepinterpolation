@@ -945,7 +945,7 @@ class OphysGenerator(SequentialGenerator):
                 print("Caching full movie onto GPU")
                 self.data_tensor = tf.convert_to_tensor(
                     self.movie_data, dtype="float")
-                self.data_tensor = (self.data_tensor - self.local_mean) / self.local_std
+                self.data_tensor = self.norm_gpu(self.data_tensor)
             else:
                 self.batch_indices = list(range(start,end))
                 self.input_indices = np.vstack(
@@ -967,7 +967,7 @@ class OphysGenerator(SequentialGenerator):
             with h5py.File(self.raw_data_file, "r") as movie_obj:
                 self._movie_data = self.norm_cpu(movie_obj['data'][()])
         if self.normalize_cache:
-            return norm_cpu(self._movie_data)
+            return self.norm_cpu(self._movie_data)
         else:
             return self._movie_data
 
@@ -983,12 +983,12 @@ class OphysGenerator(SequentialGenerator):
             self.data_tensor = tf.convert_to_tensor(
                 self.movie_data[start_ind:end_ind], dtype="float")
             if not self.normalize_cache:
-                self.data_tensor = norm_gpu(self.data_tensor)
+                self.data_tensor = self.norm_gpu(self.data_tensor)
         else:
             batch_frames = tf.convert_to_tensor(
                 self.movie_data[end_ind-self.batch_size:end_ind], dtype="float")
             if not self.normalize_cache:
-                batch_frames = norm_gpu(batch_frames)
+                batch_frames = self.norm_gpu(batch_frames)
             self.data_tensor = tf.concat(
                 [self.data_tensor[self.batch_size:], batch_frames], 0)
 
@@ -1017,8 +1017,8 @@ class OphysGenerator(SequentialGenerator):
             input_full = self.movie_data[input_indices].astype("float")
             output_full = self.movie_data[batch_indices].astype("float")
             if not self.normalize_cache:
-                input_full = norm_cpu(input_full)
-                output_full = norm_cpu(output_full)
+                input_full = self.norm_cpu(input_full)
+                output_full = self.norm_cpu(output_full)
             input_full = np.moveaxis(input_full, 1, -1)
             output_full = np.expand_dims(output_full, -1)
 
