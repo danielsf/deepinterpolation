@@ -1,4 +1,4 @@
-tensorflow==2.7
+intel-tensorflow-avx512==2.7
 nibabel
 matplotlib
 python-dateutil

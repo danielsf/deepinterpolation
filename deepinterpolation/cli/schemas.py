@@ -218,6 +218,21 @@ class GeneratorSchema(argschema.schemas.DefaultSchema):
             the maximal number."
     )
 
+    gpu_cache_full = argschema.fields.Boolean(
+        required=False,
+        default=False,
+        description="Cache full movie onto GPU memory for batch generation.\
+        Enabling this will lead to faster batch generation, training, and \
+        inference. Disable if GPU memory does not have the capacity."
+    )
+
+    normalize_cache = argschema.fields.Boolean(
+        required=False,
+        default=True,
+        description="Normalize movie after caching. This requires converting"
+        "the movie to float32 which will double the caching memory requirements."
+    )
+
     @mm.pre_load
     def generator_specific_settings(self, data, **kwargs):
         # This is for backward compatibility
@@ -362,14 +377,35 @@ class InferenceSchema(argschema.schemas.DefaultSchema):
             -1 to 1 for training."
         ),
     )
+    
+    multiprocessing = argschema.fields.Bool(
+        required=False,
+        default="False",
+        description=(
+            "Use the multiprocessing package in model inference in CPU mode. Our testing \
+            shows a performance improvement of about 60% on 16 cores. This option is \
+            memory intensive as it copies the batch data to each process. \
+            Disabled if GPU is used."
+        ),
+    )
 
     n_parallel_workers = argschema.fields.Integer(
         required=False,
         default=8,
         description=(
             "Number of parallel workers to use when farming out "
-            "inference work"
+            "inference work if multiprocessing = True."
         )
+    )
+
+    use_mixed_float16 = argschema.fields.Bool(
+        required=False,
+        default="False",
+        description=(
+            "Use float16 precision for tensorflow. Speeds up inference on devices \
+            with float16 support. Use this if you have an RTX or newer GPU, \
+            disable for most CPU processing"
+        ),
     )
 
 
@@ -506,6 +542,36 @@ class TrainingSchema(argschema.schemas.DefaultSchema):
             checkpoints.",
     )
 
+    use_multiprocessing = argschema.fields.Bool(
+        required=False,
+        default=True,
+        description="whether to use a multiprocessing pool to fetch batch \
+            samples. Setting this to true will increase data generation speed \
+            if the generator is limited by read speed. This will also \
+            increase RAM memory usage. Set to False if your hardware \
+            encounter RAM memory error during training.",
+    )
+
+    nb_workers = argschema.fields.Int(
+        required=False,
+        default=16,
+        description="Nb of workers running on the CPU to fetch \
+            batch samples. This parameter is only relevant if \
+            use_multiprocessing is set to True. Larger number of nb_workers \
+            will increase memory usage. Increase this number until your \
+            training becomes limited either by RAM or CPU usage.",
+    )
+
+    use_mixed_float16 = argschema.fields.Bool(
+        required=False,
+        default="False",
+        description=(
+            "Use float16 precision for tensorflow. Speeds up inference on devices \
+            with float16 support. Use this if you have an RTX or newer GPU, \
+            disable for most CPU processing"
+        ),
+    )
+
 
 class FineTuningSchema(argschema.schemas.DefaultSchema):
     name = argschema.fields.String(
@@ -612,11 +678,26 @@ class FineTuningSchema(argschema.schemas.DefaultSchema):
             checkpoints.",
     )
 
+    use_multiprocessing = argschema.fields.Bool(
+        required=False,
+        default=True,
+        description="whether to use a multiprocessing pool to fetch batch \
+            samples. Setting this to true will increase data generation speed \
+            if the generator is limited by read speed. This will also \
+            increase RAM memory usage. Set to False if your hardware \
+            encounter RAM memory error during training.",
+    )
+
     nb_workers = argschema.fields.Int(
         required=False,
-        default=8,
-        allow_none=True,
-        description="Number of workers passed to model.fit")
+        default=16,
+        description="Nb of workers running on the CPU to fetch \
+            batch samples. This parameter is only relevant if \
+            use_multiprocessing is set to True. Larger number of nb_workers \
+            will increase memory usage. Increase this number until your \
+            training becomes limited either by RAM or CPU usage.",
+    )
+
 
 
 class NetworkSchema(argschema.schemas.DefaultSchema):
