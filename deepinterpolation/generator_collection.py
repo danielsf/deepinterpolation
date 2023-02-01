@@ -1111,7 +1111,7 @@ class MovieJSONGenerator(MovieJSONMixin, DeepGenerator):
         self.steps_per_epoch = self.json_data["steps_per_epoch"]
         self.epoch_index = 0
 
-        self.tmp_dir = pathlib.Path(self.json_data["tmp_dir"])
+        # self.tmp_dir = pathlib.Path(self.json_data["tmp_dir"])
 
         # For backward compatibility
         if "pre_post_frame" in self.json_data.keys():
