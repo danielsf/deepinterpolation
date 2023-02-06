@@ -2,7 +2,7 @@ tensorflow==2.5.1
 nibabel
 matplotlib
 python-dateutil
-scipy==1.6.3
+scipy
 tifffile
 s3fs
 argschema==2.0.2
